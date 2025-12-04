@@ -1,0 +1,38 @@
+{
+  "name": "llatria",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": {
+    "packages": [
+      "desktop",
+      "mobile",
+      "website"
+    ],
+    "nohoist": [
+      "mobile/**",
+      "**/mobile/**"
+    ]
+  },
+  "scripts": {
+    "dev:desktop": "cd desktop && npm run dev",
+    "build:desktop": "cd desktop && npm run build",
+    "dev:mobile": "cd mobile && npm start",
+    "ios": "cd mobile && npm run ios",
+    "android": "cd mobile && npm run android",
+    "dev:website": "cd website && npm run dev",
+    "build:website": "cd website && npm run build"
+  },
+  "dependencies": {
+    "react-native-worklets": "^0.5.1"
+  },
+  "overrides": {
+    "react-dom": "^19.2.0",
+    "react": "^19.2.0",
+    "react-native-renderer": "^19.2.0"
+  },
+  "resolutions": {
+    "react-dom": "^19.2.0",
+    "react": "^19.2.0",
+    "react-native-renderer": "^19.2.0"
+  }
+}

@@ -1,0 +1,184 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum ItemCondition {
+  new
+  like_new
+  used
+  fair
+  poor
+}
+
+enum ItemStatus {
+  active
+  sold
+  draft
+}
+
+enum Platform {
+  facebook
+  ebay
+  website
+}
+
+enum PostingStatus {
+  idle
+  posting
+  posted
+  error
+}
+
+enum SyncEventType {
+  create
+  update
+  delete
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String   @map("password_hash")
+  name          String?
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+  lastLogin     DateTime? @map("last_login")
+  isActive      Boolean  @default(true) @map("is_active")
+
+  inventoryItems      InventoryItem[]
+  platformCredentials PlatformCredential[]
+  syncEvents          SyncEvent[]
+
+  @@map("users")
+}
+
+model InventoryItem {
+  id          String        @id @default(uuid())
+  userId      String        @map("user_id")
+  title       String
+  description String        @db.Text
+  price       Decimal       @db.Decimal(10, 2)
+  condition   ItemCondition
+  category    String
+  status      ItemStatus    @default(active)
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+  soldAt      DateTime?     @map("sold_at")
+
+  user        User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  images      InventoryImage[]
+  aiData     AIData?
+  postings    PlatformPosting[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([category])
+  @@map("inventory_items")
+}
+
+model InventoryImage {
+  id        String   @id @default(uuid())
+  itemId    String   @map("item_id")
+  url       String
+  order     Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  item InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@index([itemId])
+  @@map("inventory_images")
+}
+
+model AIData {
+  id              String   @id @default(uuid())
+  itemId          String   @unique @map("item_id")
+  recognizedItem  String   @map("recognized_item")
+  confidence      Decimal  @db.Decimal(3, 2)
+  marketPrice     Decimal  @db.Decimal(10, 2) @map("market_price")
+  suggestedPrice  Decimal  @db.Decimal(10, 2) @map("suggested_price")
+  description     String   @db.Text
+  category        String
+  condition       ItemCondition
+  brand           String?
+  model           String?
+  year            Int?
+  color           String?
+  size            String?
+  dimensions      Json?    // Flexible schema for dimensions
+  specifications  Json?    // Flexible schema for specifications
+  similarItems    Json?    @map("similar_items") // Array of similar items
+  researchNotes   String?  @db.Text @map("research_notes")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  item InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@map("ai_data")
+}
+
+model PlatformPosting {
+  id           String        @id @default(uuid())
+  itemId       String        @map("item_id")
+  platform     Platform
+  status       PostingStatus @default(idle)
+  externalId   String?       @map("external_id")
+  externalUrl  String?       @map("external_url")
+  errorMessage String?       @db.Text @map("error_message")
+  postedAt     DateTime?     @map("posted_at")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  item InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([itemId, platform])
+  @@index([itemId])
+  @@index([platform])
+  @@index([status])
+  @@map("platform_postings")
+}
+
+model PlatformCredential {
+  id           String    @id @default(uuid())
+  userId       String    @map("user_id")
+  platform     Platform
+  accessToken  String    @map("access_token") // Will be encrypted
+  refreshToken String?   @map("refresh_token") // Will be encrypted
+  expiresAt    DateTime? @map("expires_at")
+  isActive     Boolean   @default(true) @map("is_active")
+  metadata     Json?     // Platform-specific data
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, platform])
+  @@index([userId])
+  @@index([platform])
+  @@map("platform_credentials")
+}
+
+model SyncEvent {
+  id         String         @id @default(uuid())
+  userId     String         @map("user_id")
+  deviceId   String         @map("device_id")
+  eventType  SyncEventType  @map("event_type")
+  entityType String         @map("entity_type")
+  entityId   String         @map("entity_id")
+  data       Json           // Snapshot of changes
+  timestamp  DateTime       @default(now())
+  synced     Boolean        @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([deviceId])
+  @@index([synced])
+  @@index([timestamp])
+  @@map("sync_events")
+}

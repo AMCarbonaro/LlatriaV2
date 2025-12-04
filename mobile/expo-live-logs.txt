@@ -1,0 +1,16 @@
+Starting project at /Users/amcarbonaro/Desktop/DESKTOP 1/Carbonaro Media 2/llatria/mobile
+Starting Metro Bundler
+warning: Bundler cache is empty, rebuilding (this may take a minute)
+The following packages should be updated for best compatibility with the installed expo version:
+  react@19.2.0 - expected version: 19.1.0
+  react-dom@19.2.0 - expected version: 19.1.0
+  react-native-svg@15.15.0 - expected version: 15.12.1
+  react-native-worklets@0.5.2 - expected version: 0.5.1
+  @types/react@19.2.0 - expected version: ~19.1.10
+Your project may not work correctly until you install the expected versions of the packages.
+Waiting on http://localhost:8081
+Logs for your project will appear below.
+Web node_modules/expo-router/entry.js ▓▓▓▓▓░░░░░░░░░░░ 35.1% (21/42)
+Web node_modules/expo-router/entry.js ▓▓▓▓▓▓▓░░░░░░░░░ 46.0% ( 564/2391)
+Web node_modules/expo-router/entry.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░ 91.3% (2380/2491)
+Web Bundled 11724ms node_modules/expo-router/entry.js (2998 modules)

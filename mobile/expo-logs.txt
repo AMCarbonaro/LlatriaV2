@@ -1,0 +1,16 @@
+=== Capturing Expo Logs ===
+Timestamp: Thu Nov 27 05:58:52 MST 2025
+
+=== Expo Process Info ===
+
+=== Port Status ===
+
+=== Metro Bundler Status ===
+
+=== React Version Check ===
+  │ │ └── react-native@0.81.5 deduped
+  │ └── react-native@0.81.5 deduped
+  │ └── react-native@0.81.5 deduped
+  │ └── react-native@0.81.5 deduped
+  │ │ └── react-native@0.81.5 deduped
+
