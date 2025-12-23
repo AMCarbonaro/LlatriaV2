@@ -21,3 +21,6 @@ export const InventoryItemSkeleton: React.FC = () => {
 
 
 
+
+
+

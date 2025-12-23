@@ -40,3 +40,6 @@ When creating a new inventory item from the camera, the app was showing "Remove"
 
 
 
+
+
+

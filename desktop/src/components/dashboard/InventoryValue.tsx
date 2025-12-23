@@ -80,3 +80,6 @@ export const InventoryValue: React.FC<InventoryValueProps> = ({ items }) => {
 
 
 
+
+
+

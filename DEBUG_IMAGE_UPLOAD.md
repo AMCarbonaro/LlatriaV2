@@ -36,3 +36,6 @@ console.log('Uploaded images:', window.uploadedImages);
 
 
 
+
+
+

@@ -10,7 +10,9 @@
     ],
     "nohoist": [
       "mobile/**",
-      "**/mobile/**"
+      "**/mobile/**",
+      "website/**",
+      "**/website/**"
     ]
   },
   "scripts": {
@@ -23,6 +25,7 @@
     "build:website": "cd website && npm run build"
   },
   "dependencies": {
+    "queue-microtask": "^1.2.3",
     "react-native-worklets": "^0.5.1"
   },
   "overrides": {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Trash2, CheckCircle2, Sparkles, Save, X, Image as ImageIcon, Upload, Send, XCircle, Loader2 } from 'lucide-react';
+import { Trash2, CheckCircle2, Sparkles, Save, X, Image as ImageIcon, Upload, Send, XCircle, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
 import { InventoryItem as InventoryItemType, Platform } from '@/types/inventory';
 import { Card, CardContent, CardHeader, CardTitle } from '../common/Card';
 import { Button } from '../common/Button';
@@ -28,6 +28,11 @@ export const InventoryItemDetails: React.FC<InventoryItemDetailsProps> = ({
   const [images, setImages] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [collapsedSections, setCollapsedSections] = useState({
+    facebook: false,
+    ebay: false,
+    website: false,
+  });
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -683,7 +688,18 @@ export const InventoryItemDetails: React.FC<InventoryItemDetailsProps> = ({
       <Card>
         <CardHeader className="bg-blue-50 dark:bg-blue-950">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-1">
+              <button
+                onClick={() => setCollapsedSections({ ...collapsedSections, facebook: !collapsedSections.facebook })}
+                className="p-1 hover:bg-blue-100 dark:hover:bg-blue-900 rounded transition-colors"
+                aria-label={collapsedSections.facebook ? 'Expand Facebook section' : 'Collapse Facebook section'}
+              >
+                {collapsedSections.facebook ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronUp className="h-4 w-4" />
+                )}
+              </button>
               <span className="text-2xl">📘</span>
               <CardTitle className="text-foreground flex items-center">
                 Facebook Marketplace
@@ -730,6 +746,7 @@ export const InventoryItemDetails: React.FC<InventoryItemDetailsProps> = ({
             )}
           </div>
         </CardHeader>
+        {!collapsedSections.facebook && (
           <CardContent className="space-y-4">
             <Input
               label="Title"
@@ -775,13 +792,25 @@ export const InventoryItemDetails: React.FC<InventoryItemDetailsProps> = ({
               />
             </div>
           </CardContent>
+        )}
         </Card>
 
       {/* eBay Section */}
       <Card>
         <CardHeader className="bg-blue-50 dark:bg-blue-950">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-1">
+              <button
+                onClick={() => setCollapsedSections({ ...collapsedSections, ebay: !collapsedSections.ebay })}
+                className="p-1 hover:bg-blue-100 dark:hover:bg-blue-900 rounded transition-colors"
+                aria-label={collapsedSections.ebay ? 'Expand eBay section' : 'Collapse eBay section'}
+              >
+                {collapsedSections.ebay ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronUp className="h-4 w-4" />
+                )}
+              </button>
               <span className="text-2xl">🛒</span>
               <CardTitle className="text-foreground flex items-center">
                 eBay Listing
@@ -828,6 +857,7 @@ export const InventoryItemDetails: React.FC<InventoryItemDetailsProps> = ({
             )}
           </div>
         </CardHeader>
+        {!collapsedSections.ebay && (
           <CardContent className="space-y-4">
             <Input
               label="Title"
@@ -939,13 +969,25 @@ export const InventoryItemDetails: React.FC<InventoryItemDetailsProps> = ({
               </div>
             )}
           </CardContent>
+        )}
         </Card>
 
       {/* Website Section */}
       <Card>
         <CardHeader className="bg-blue-50 dark:bg-blue-950">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-1">
+              <button
+                onClick={() => setCollapsedSections({ ...collapsedSections, website: !collapsedSections.website })}
+                className="p-1 hover:bg-blue-100 dark:hover:bg-blue-900 rounded transition-colors"
+                aria-label={collapsedSections.website ? 'Expand Website section' : 'Collapse Website section'}
+              >
+                {collapsedSections.website ? (
+                  <ChevronDown className="h-4 w-4" />
+                ) : (
+                  <ChevronUp className="h-4 w-4" />
+                )}
+              </button>
               <span className="text-2xl">🌐</span>
               <CardTitle className="text-foreground flex items-center">
                 Your Website
@@ -992,6 +1034,7 @@ export const InventoryItemDetails: React.FC<InventoryItemDetailsProps> = ({
             )}
           </div>
         </CardHeader>
+        {!collapsedSections.website && (
           <CardContent className="space-y-4">
             <Input
               label="Title"
@@ -1057,6 +1100,7 @@ export const InventoryItemDetails: React.FC<InventoryItemDetailsProps> = ({
               </p>
             </div>
           </CardContent>
+        )}
         </Card>
     </div>
   );

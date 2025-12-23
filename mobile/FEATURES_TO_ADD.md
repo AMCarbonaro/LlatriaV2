@@ -48,3 +48,6 @@ I'll systematically update the mobile inventory screen to add all these features
 
 
 
+
+
+
