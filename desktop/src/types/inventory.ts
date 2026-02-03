@@ -1,4 +1,4 @@
-export type ItemStatus = 'active' | 'sold' | 'draft';
+export type ItemStatus = 'unposted' | 'posting' | 'active' | 'sold';
 
 export type ItemCondition = 'new' | 'like_new' | 'used' | 'fair' | 'poor';
 

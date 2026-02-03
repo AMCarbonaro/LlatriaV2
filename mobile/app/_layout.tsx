@@ -7,6 +7,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useAuthStore } from '@/store/authStore';
 import { useThemeStore } from '@/store/themeStore';
 import { Toaster } from '@/components/Toaster';
+import { useSocketSync } from '@/hooks/useSocketSync';
 
 export default function RootLayout() {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -14,6 +15,9 @@ export default function RootLayout() {
   const { isDark, initializeTheme } = useThemeStore();
   const [isReady, setIsReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Initialize Socket.io real-time sync
+  useSocketSync();
 
   useEffect(() => {
     // Initialize auth state and theme on app start

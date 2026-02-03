@@ -378,7 +378,7 @@ export default function InventoryScreen() {
                   Status
                 </Text>
                 <View style={styles.filterButtons}>
-                  {(['all', 'active', 'sold'] as const).map((status) => (
+                  {(['all', 'unposted', 'posting', 'active', 'sold'] as const).map((status) => (
                     <TouchableOpacity
                       key={status}
                       style={[

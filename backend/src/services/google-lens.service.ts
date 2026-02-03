@@ -192,6 +192,15 @@ export class GoogleLensService {
       // Analyze image with Vision API
       const analysis = await this.analyzeImage(imageBase64);
 
+      // Debug logging
+      console.log('🔍 Vision API Analysis:');
+      console.log('  Labels:', analysis.labels.slice(0, 5).map(l => `${l.description} (${(l.score * 100).toFixed(0)}%)`).join(', '));
+      console.log('  Objects:', analysis.objects.slice(0, 5).map(o => `${o.name} (${(o.score * 100).toFixed(0)}%)`).join(', '));
+      console.log('  Web Entities:', analysis.webEntities.slice(0, 5).map(e => e.description).join(', '));
+      console.log('  Best Guess:', analysis.bestGuessLabels.slice(0, 3).join(', '));
+      console.log('  Logos:', analysis.logos.map(l => l.description).join(', '));
+      console.log('  Text (excerpt):', analysis.text.substring(0, 200));
+
       // Extract brand from logos first, then from text/labels
       const topLogo = analysis.logos[0];
       let brand = topLogo?.description || this.extractBrand(analysis.labels, analysis.text);
@@ -427,9 +436,10 @@ export class GoogleLensService {
     // Use top 3 most confident labels for key features
     const topLabels = analysis.labels
       .slice(0, 3)
-      .map(label => label.description)
+      .map(label => label.description || '')
       .filter(label => {
         // Filter out generic labels
+        if (!label) return false;
         const generic = ['product', 'object', 'thing', 'item', 'goods'];
         return !generic.includes(label.toLowerCase());
       });
@@ -486,9 +496,16 @@ export class GoogleLensService {
     webEntities: Array<{ description: string }> = []
   ): string {
     const allText = [
-      ...labels.map(l => l.description.toLowerCase()),
-      ...webEntities.map(e => e.description.toLowerCase())
+      ...labels.map(l => l.description?.toLowerCase() || ''),
+      ...webEntities.map(e => e.description?.toLowerCase() || '')
     ].join(' ');
+
+    // Gaming
+    if (allText.includes('xbox') || allText.includes('playstation') || allText.includes('nintendo') ||
+        allText.includes('switch') || allText.includes('ps5') || allText.includes('ps4') ||
+        allText.includes('video game') || allText.includes('game console') || allText.includes('gaming')) {
+      return 'Electronics';
+    }
 
     // Electronics
     if (allText.includes('phone') || allText.includes('smartphone') || allText.includes('iphone') || 
@@ -571,8 +588,8 @@ export class GoogleLensService {
     text: string
   ): string {
     const allText = [
-      ...labels.map(l => l.description.toLowerCase()),
-      text.toLowerCase()
+      ...labels.map(l => l.description?.toLowerCase() || ''),
+      (text || '').toLowerCase()
     ].join(' ');
 
     if (allText.includes('new') || allText.includes('unopened') || allText.includes('sealed')) {
@@ -633,6 +650,48 @@ export class GoogleLensService {
       const desc = entity.description;
       const lowerDesc = desc.toLowerCase();
 
+      // Xbox products
+      if (lowerDesc.includes('xbox')) {
+        if (lowerDesc.includes('series x')) {
+          return { name: 'Xbox Series X', brand: 'Microsoft', model: 'Series X' };
+        }
+        if (lowerDesc.includes('series s')) {
+          return { name: 'Xbox Series S', brand: 'Microsoft', model: 'Series S' };
+        }
+        if (lowerDesc.includes('one x')) {
+          return { name: 'Xbox One X', brand: 'Microsoft', model: 'One X' };
+        }
+        if (lowerDesc.includes('one')) {
+          return { name: 'Xbox One', brand: 'Microsoft', model: 'One' };
+        }
+        return { name: 'Xbox', brand: 'Microsoft' };
+      }
+
+      // PlayStation products
+      if (lowerDesc.includes('playstation') || lowerDesc.includes('ps5') || lowerDesc.includes('ps4')) {
+        if (lowerDesc.includes('5') || lowerDesc.includes('ps5')) {
+          return { name: 'PlayStation 5', brand: 'Sony', model: 'PS5' };
+        }
+        if (lowerDesc.includes('4') || lowerDesc.includes('ps4')) {
+          return { name: 'PlayStation 4', brand: 'Sony', model: 'PS4' };
+        }
+        return { name: 'PlayStation', brand: 'Sony' };
+      }
+
+      // Nintendo products
+      if (lowerDesc.includes('nintendo') || lowerDesc.includes('switch')) {
+        if (lowerDesc.includes('switch')) {
+          if (lowerDesc.includes('oled')) {
+            return { name: 'Nintendo Switch OLED', brand: 'Nintendo', model: 'Switch OLED' };
+          }
+          if (lowerDesc.includes('lite')) {
+            return { name: 'Nintendo Switch Lite', brand: 'Nintendo', model: 'Switch Lite' };
+          }
+          return { name: 'Nintendo Switch', brand: 'Nintendo', model: 'Switch' };
+        }
+        return { name: 'Nintendo Console', brand: 'Nintendo' };
+      }
+
       // Apple products
       if (lowerDesc.includes('macbook')) {
         const macbookMatch = desc.match(/(MacBook\s+(?:Pro|Air)(?:\s+\d+)?(?:\s+M\d+)?(?:\s+Pro)?)/i);
@@ -686,10 +745,10 @@ export class GoogleLensService {
     text: string;
   }): boolean {
     const allText = [
-      ...analysis.labels.map(l => l.description.toLowerCase()),
-      ...analysis.objects.map(o => o.name.toLowerCase()),
-      ...analysis.webEntities.map(e => e.description.toLowerCase()),
-      analysis.text.toLowerCase(),
+      ...analysis.labels.map(l => l.description?.toLowerCase() || ''),
+      ...analysis.objects.map(o => o.name?.toLowerCase() || ''),
+      ...analysis.webEntities.map(e => e.description?.toLowerCase() || ''),
+      (analysis.text || '').toLowerCase(),
     ].join(' ');
 
     return (
@@ -715,10 +774,10 @@ export class GoogleLensService {
     model?: string
   ): string | null {
     const allText = [
-      ...analysis.labels.map(l => l.description),
-      ...analysis.objects.map(o => o.name),
-      ...analysis.webEntities.map(e => e.description),
-      analysis.text,
+      ...analysis.labels.map(l => l.description || ''),
+      ...analysis.objects.map(o => o.name || ''),
+      ...analysis.webEntities.map(e => e.description || ''),
+      analysis.text || '',
     ].join(' ').toLowerCase();
 
     // MacBook detection
@@ -792,6 +851,12 @@ export class GoogleLensService {
       'item',
       'object',
       'thing',
+      'gadget',
+      'technology',
+      'hardware',
+      'equipment',
+      'machine',
+      'appliance',
     ];
 
     const lowerTerm = term.toLowerCase();
@@ -806,10 +871,26 @@ export class GoogleLensService {
       'Apple', 'Samsung', 'Google', 'Microsoft', 'Sony', 'Canon', 'Nikon',
       'Rolex', 'Omega', 'Fender', 'Gibson', 'Dewalt', 'Makita', 'Tiffany',
       'Dell', 'HP', 'Lenovo', 'Asus', 'Acer', 'LG', 'Panasonic', 'Bose',
-      'JBL', 'Beats', 'Nike', 'Adidas', 'Gucci', 'Prada', 'Louis Vuitton'
+      'JBL', 'Beats', 'Nike', 'Adidas', 'Gucci', 'Prada', 'Louis Vuitton',
+      'Nintendo', 'Xbox', 'PlayStation'
     ];
 
     const searchText = (labels.map(l => l.description).join(' ') + ' ' + text).toLowerCase();
+
+    // Check for Xbox products
+    if (searchText.includes('xbox')) {
+      return 'Microsoft';
+    }
+
+    // Check for PlayStation products
+    if (searchText.includes('playstation') || searchText.includes('ps5') || searchText.includes('ps4')) {
+      return 'Sony';
+    }
+
+    // Check for Nintendo products
+    if (searchText.includes('nintendo') || searchText.includes('switch')) {
+      return 'Nintendo';
+    }
 
     // Check for Apple products first (MacBook, iPhone, iPad indicate Apple)
     if (searchText.includes('macbook') || searchText.includes('iphone') || 
@@ -846,6 +927,51 @@ export class GoogleLensService {
 
     const upperText = text.toUpperCase();
     const lowerText = text.toLowerCase();
+
+    // Xbox products
+    if (lowerText.includes('xbox')) {
+      // Xbox Series X/S
+      if (lowerText.includes('series x') || lowerText.includes('series s')) {
+        const seriesMatch = text.match(/xbox\s*(?:one\s*)?(series\s*[xs])/i);
+        const storageMatch = text.match(/(\d+)\s*(tb|gb)/i);
+        let name = seriesMatch ? `Xbox ${seriesMatch[1]}` : 'Xbox Series X';
+        if (storageMatch) {
+          name += ` ${storageMatch[1]}${storageMatch[2].toUpperCase()}`;
+        }
+        return { name, model: seriesMatch?.[1] || 'Series X' };
+      }
+      // Xbox One
+      if (lowerText.includes('one')) {
+        const oneMatch = text.match(/xbox\s*one\s*(x|s)?/i);
+        return { name: oneMatch ? `Xbox One${oneMatch[1] ? ' ' + oneMatch[1].toUpperCase() : ''}` : 'Xbox One', model: 'One' };
+      }
+      return { name: 'Xbox', model: undefined };
+    }
+
+    // PlayStation products
+    if (lowerText.includes('playstation') || lowerText.includes('ps5') || lowerText.includes('ps4')) {
+      if (lowerText.includes('ps5') || lowerText.includes('playstation 5')) {
+        const digitalMatch = lowerText.includes('digital');
+        return { name: digitalMatch ? 'PlayStation 5 Digital Edition' : 'PlayStation 5', model: 'PS5' };
+      }
+      if (lowerText.includes('ps4') || lowerText.includes('playstation 4')) {
+        const proMatch = lowerText.includes('pro');
+        return { name: proMatch ? 'PlayStation 4 Pro' : 'PlayStation 4', model: 'PS4' };
+      }
+      return { name: 'PlayStation', model: undefined };
+    }
+
+    // Nintendo products
+    if (lowerText.includes('nintendo') || lowerText.includes('switch')) {
+      if (lowerText.includes('switch')) {
+        const oledMatch = lowerText.includes('oled');
+        const liteMatch = lowerText.includes('lite');
+        if (oledMatch) return { name: 'Nintendo Switch OLED', model: 'Switch OLED' };
+        if (liteMatch) return { name: 'Nintendo Switch Lite', model: 'Switch Lite' };
+        return { name: 'Nintendo Switch', model: 'Switch' };
+      }
+      return { name: 'Nintendo Console', model: undefined };
+    }
 
     // Apple products
     if (lowerText.includes('macbook') || brand?.toLowerCase() === 'apple') {

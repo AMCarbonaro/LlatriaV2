@@ -1,7 +1,11 @@
 import { create } from 'zustand';
 import { InventoryItem, ItemStatus, Platform } from '../types/inventory';
+import { apiService } from '../services/apiService';
 import { mockInventoryService } from '../services/mockInventoryService';
 import { useHistoryStore } from './historyStore';
+
+// Use real API if available, fallback to mock
+const useRealApi = true; // Set to false for offline development
 
 interface InventoryState {
   items: InventoryItem[];
@@ -56,13 +60,29 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
 
   loadInventory: async () => {
     set({ isLoading: true });
-    const items = await mockInventoryService.getAll();
-    set({ items, isLoading: false });
+    try {
+      const items = useRealApi 
+        ? await apiService.getInventory()
+        : await mockInventoryService.getAll();
+      set({ items, isLoading: false });
+    } catch (error) {
+      console.error('Failed to load inventory, using mock:', error);
+      const items = await mockInventoryService.getAll();
+      set({ items, isLoading: false });
+    }
     get().applyFilters();
   },
 
   addItem: async (item) => {
-    const newItem = await mockInventoryService.create(item);
+    let newItem: InventoryItem;
+    try {
+      newItem = useRealApi
+        ? await apiService.createItem(item)
+        : await mockInventoryService.create(item);
+    } catch (error) {
+      console.error('Failed to create item via API, using mock:', error);
+      newItem = await mockInventoryService.create(item);
+    }
     set((state) => {
       const newItems = [...state.items, newItem];
       return { items: newItems };
@@ -75,19 +95,26 @@ export const useInventoryStore = create<InventoryState>((set, get) => ({
 
   updateItem: async (id, updates) => {
     const oldItem = get().items.find(item => item.id === id);
-    const updated = await mockInventoryService.update(id, updates);
-    if (updated && oldItem) {
-      set((state) => ({
-        items: state.items.map(item => item.id === id ? updated : item),
-      }));
-      // Track in history
-      useHistoryStore.getState().addAction({ 
-        type: 'update', 
-        itemId: id, 
-        oldItem, 
-        newItem: updated 
-      });
-      get().applyFilters();
+    let updated: InventoryItem | null;
+    try {
+      updated = useRealApi
+        ? await apiService.updateItem(id, updates)
+        : await mockInventoryService.update(id, updates);
+      if (updated && oldItem) {
+        set((state) => ({
+          items: state.items.map(item => item.id === id ? updated : item),
+        }));
+        // Track in history
+        useHistoryStore.getState().addAction({ 
+          type: 'update', 
+          itemId: id, 
+          oldItem, 
+          newItem: updated 
+        });
+        get().applyFilters();
+      }
+    } catch (error) {
+      console.error('Failed to update item:', error);
     }
   },
 

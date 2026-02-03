@@ -1,619 +1,681 @@
-const { BrowserWindow } = require('electron');
+const { BrowserWindow, clipboard, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs').promises;
+const os = require('os');
 
 /**
- * Facebook Marketplace automation using Electron's BrowserWindow
- * Since Facebook doesn't have a public API, we automate the web interface
+ * Facebook Marketplace Automation v2
+ * 
+ * Uses keyboard simulation and robust element detection to handle
+ * Facebook's frequently changing DOM structure.
  */
 class FacebookAutomation {
   constructor() {
     this.browserWindow = null;
     this.isProcessing = false;
+    this.debugMode = process.env.NODE_ENV === 'development';
+  }
+
+  log(...args) {
+    console.log('[FB Automation]', ...args);
+  }
+
+  error(...args) {
+    console.error('[FB Automation Error]', ...args);
   }
 
   /**
-   * Convert base64 image to temporary file
+   * Save base64 image to temp file for upload
    */
   async saveImageToTemp(base64Image, index) {
-    const tempDir = require('os').tmpdir();
-    const imagePath = path.join(tempDir, `llatria-fb-${Date.now()}-${index}.jpg`);
+    const tempDir = path.join(os.tmpdir(), 'llatria-fb-images');
+    await fs.mkdir(tempDir, { recursive: true });
     
-    // Remove data URL prefix if present
+    const imagePath = path.join(tempDir, `image-${Date.now()}-${index}.jpg`);
     const base64Data = base64Image.replace(/^data:image\/\w+;base64,/, '');
     const buffer = Buffer.from(base64Data, 'base64');
     
     await fs.writeFile(imagePath, buffer);
+    this.log(`Saved image ${index} to:`, imagePath);
     return imagePath;
   }
 
   /**
-   * Post item to Facebook Marketplace
+   * Clean up temp images
    */
-  async postToMarketplace(itemData, images) {
+  async cleanupTempImages() {
+    try {
+      const tempDir = path.join(os.tmpdir(), 'llatria-fb-images');
+      const files = await fs.readdir(tempDir);
+      for (const file of files) {
+        await fs.unlink(path.join(tempDir, file));
+      }
+      this.log('Cleaned up temp images');
+    } catch (e) {
+      // Ignore cleanup errors
+    }
+  }
+
+  /**
+   * Wait for a condition to be true
+   */
+  async waitFor(conditionFn, timeoutMs = 30000, pollMs = 500) {
+    const startTime = Date.now();
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        const result = await conditionFn();
+        if (result) return result;
+      } catch (e) {
+        // Continue waiting
+      }
+      await new Promise(r => setTimeout(r, pollMs));
+    }
+    throw new Error(`Timeout waiting for condition after ${timeoutMs}ms`);
+  }
+
+  /**
+   * Simulate typing text character by character
+   */
+  async typeText(text) {
+    if (!this.browserWindow) return;
+    
+    for (const char of text) {
+      this.browserWindow.webContents.sendInputEvent({
+        type: 'char',
+        keyCode: char
+      });
+      await new Promise(r => setTimeout(r, 30 + Math.random() * 20)); // Human-like delay
+    }
+  }
+
+  /**
+   * Send keyboard shortcut
+   */
+  async sendKey(key, modifiers = []) {
+    if (!this.browserWindow) return;
+    
+    this.browserWindow.webContents.sendInputEvent({
+      type: 'keyDown',
+      keyCode: key,
+      modifiers
+    });
+    await new Promise(r => setTimeout(r, 50));
+    this.browserWindow.webContents.sendInputEvent({
+      type: 'keyUp',
+      keyCode: key,
+      modifiers
+    });
+  }
+
+  /**
+   * Click at specific coordinates
+   */
+  async clickAt(x, y) {
+    if (!this.browserWindow) return;
+    
+    this.browserWindow.webContents.sendInputEvent({
+      type: 'mouseDown',
+      x: Math.round(x),
+      y: Math.round(y),
+      button: 'left',
+      clickCount: 1
+    });
+    await new Promise(r => setTimeout(r, 50));
+    this.browserWindow.webContents.sendInputEvent({
+      type: 'mouseUp',
+      x: Math.round(x),
+      y: Math.round(y),
+      button: 'left',
+      clickCount: 1
+    });
+  }
+
+  /**
+   * Execute JavaScript in the browser context with proper error handling
+   */
+  async executeScript(script) {
+    if (!this.browserWindow) throw new Error('No browser window');
+    return await this.browserWindow.webContents.executeJavaScript(script);
+  }
+
+  /**
+   * Find and click an element by various strategies
+   */
+  async findAndClick(strategies) {
+    const script = `
+      (function() {
+        const strategies = ${JSON.stringify(strategies)};
+        
+        for (const strategy of strategies) {
+          let elements = [];
+          
+          if (strategy.selector) {
+            elements = Array.from(document.querySelectorAll(strategy.selector));
+          }
+          
+          if (strategy.textContains) {
+            const allElements = document.querySelectorAll('*');
+            elements = Array.from(allElements).filter(el => {
+              const text = el.textContent?.toLowerCase() || '';
+              const ariaLabel = el.getAttribute('aria-label')?.toLowerCase() || '';
+              return text.includes(strategy.textContains.toLowerCase()) || 
+                     ariaLabel.includes(strategy.textContains.toLowerCase());
+            });
+          }
+          
+          // Find visible, clickable element
+          for (const el of elements) {
+            const rect = el.getBoundingClientRect();
+            const style = window.getComputedStyle(el);
+            
+            if (rect.width > 0 && rect.height > 0 && 
+                style.visibility !== 'hidden' && 
+                style.display !== 'none') {
+              
+              // Check if it's in viewport
+              if (rect.top >= 0 && rect.left >= 0 && 
+                  rect.bottom <= window.innerHeight && 
+                  rect.right <= window.innerWidth) {
+                
+                return {
+                  found: true,
+                  x: rect.left + rect.width / 2,
+                  y: rect.top + rect.height / 2,
+                  tagName: el.tagName,
+                  text: el.textContent?.substring(0, 50)
+                };
+              }
+            }
+          }
+        }
+        
+        return { found: false };
+      })()
+    `;
+    
+    return await this.executeScript(script);
+  }
+
+  /**
+   * Fill a form field using multiple strategies
+   */
+  async fillField(fieldConfig) {
+    const { label, value, type = 'text' } = fieldConfig;
+    
+    this.log(`Filling field: ${label} with value: ${value?.substring(0, 30)}...`);
+    
+    // Strategy 1: Find by aria-label or placeholder
+    const findScript = `
+      (function() {
+        const label = "${label.replace(/"/g, '\\"')}".toLowerCase();
+        
+        // Find input/textarea by label
+        const inputs = Array.from(document.querySelectorAll('input, textarea, [contenteditable="true"]'));
+        
+        for (const input of inputs) {
+          const ariaLabel = (input.getAttribute('aria-label') || '').toLowerCase();
+          const placeholder = (input.placeholder || '').toLowerCase();
+          const labelFor = input.id ? document.querySelector(\`label[for="\${input.id}"]\`)?.textContent?.toLowerCase() : '';
+          
+          if (ariaLabel.includes(label) || placeholder.includes(label) || labelFor?.includes(label)) {
+            const rect = input.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+              return {
+                found: true,
+                x: rect.left + rect.width / 2,
+                y: rect.top + rect.height / 2,
+                tagName: input.tagName,
+                isContentEditable: input.contentEditable === 'true'
+              };
+            }
+          }
+        }
+        
+        // Strategy 2: Find by nearby text label
+        const allText = document.body.innerText.toLowerCase();
+        if (allText.includes(label)) {
+          const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+          while (walker.nextNode()) {
+            if (walker.currentNode.textContent?.toLowerCase().includes(label)) {
+              const parent = walker.currentNode.parentElement;
+              const nearbyInput = parent?.querySelector('input, textarea, [contenteditable="true"]') ||
+                                  parent?.nextElementSibling?.querySelector('input, textarea, [contenteditable="true"]');
+              if (nearbyInput) {
+                const rect = nearbyInput.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) {
+                  return {
+                    found: true,
+                    x: rect.left + rect.width / 2,
+                    y: rect.top + rect.height / 2,
+                    tagName: nearbyInput.tagName,
+                    isContentEditable: nearbyInput.contentEditable === 'true'
+                  };
+                }
+              }
+            }
+          }
+        }
+        
+        return { found: false };
+      })()
+    `;
+    
+    const result = await this.executeScript(findScript);
+    
+    if (!result.found) {
+      this.log(`Field "${label}" not found, skipping`);
+      return false;
+    }
+    
+    // Click to focus the field
+    await this.clickAt(result.x, result.y);
+    await new Promise(r => setTimeout(r, 300));
+    
+    // Clear existing content
+    await this.sendKey('a', ['control']);
+    await new Promise(r => setTimeout(r, 100));
+    
+    // Type the value
+    if (type === 'text' || type === 'textarea') {
+      await this.typeText(String(value));
+    } else if (type === 'number') {
+      await this.typeText(String(value));
+    }
+    
+    await new Promise(r => setTimeout(r, 200));
+    this.log(`Field "${label}" filled successfully`);
+    return true;
+  }
+
+  /**
+   * Handle Facebook's photo upload
+   */
+  async uploadPhotos(imagePaths) {
+    this.log('Starting photo upload, paths:', imagePaths);
+    
+    // Find photo upload button/area
+    const uploadAreaScript = `
+      (function() {
+        // Look for file input
+        const fileInputs = document.querySelectorAll('input[type="file"][accept*="image"]');
+        for (const input of fileInputs) {
+          const rect = input.getBoundingClientRect();
+          // File inputs are often hidden, check parent
+          if (input.offsetParent !== null || rect.width > 0) {
+            return { 
+              found: true, 
+              type: 'fileInput',
+              x: rect.left + rect.width / 2,
+              y: rect.top + rect.height / 2
+            };
+          }
+        }
+        
+        // Look for "Add photos" button/area
+        const photoButtons = Array.from(document.querySelectorAll('[aria-label*="photo"], [aria-label*="Photo"], [aria-label*="image"]'));
+        for (const btn of photoButtons) {
+          const rect = btn.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            return {
+              found: true,
+              type: 'photoButton',
+              x: rect.left + rect.width / 2,
+              y: rect.top + rect.height / 2,
+              label: btn.getAttribute('aria-label')
+            };
+          }
+        }
+        
+        // Look for drag-drop area or + button
+        const addAreas = Array.from(document.querySelectorAll('[role="button"]')).filter(el => {
+          const text = el.textContent?.toLowerCase() || '';
+          const label = el.getAttribute('aria-label')?.toLowerCase() || '';
+          return text.includes('add photo') || text.includes('upload') || 
+                 label.includes('add photo') || label.includes('upload') ||
+                 text.includes('+');
+        });
+        
+        for (const area of addAreas) {
+          const rect = area.getBoundingClientRect();
+          if (rect.width > 50 && rect.height > 50) {
+            return {
+              found: true,
+              type: 'addButton',
+              x: rect.left + rect.width / 2,
+              y: rect.top + rect.height / 2,
+              text: area.textContent?.substring(0, 30)
+            };
+          }
+        }
+        
+        return { found: false };
+      })()
+    `;
+    
+    const uploadArea = await this.executeScript(uploadAreaScript);
+    this.log('Upload area detection:', uploadArea);
+    
+    if (!uploadArea.found) {
+      // Save images to a known location and show instructions
+      const downloadDir = path.join(os.homedir(), 'Downloads', 'llatria-marketplace-images');
+      await fs.mkdir(downloadDir, { recursive: true });
+      
+      const savedPaths = [];
+      for (let i = 0; i < imagePaths.length; i++) {
+        const sourcePath = imagePaths[i];
+        const destPath = path.join(downloadDir, `listing-image-${i + 1}.jpg`);
+        await fs.copyFile(sourcePath, destPath);
+        savedPaths.push(destPath);
+      }
+      
+      // Show notification in the browser
+      await this.executeScript(`
+        (function() {
+          const overlay = document.createElement('div');
+          overlay.style.cssText = \`
+            position: fixed; top: 20px; right: 20px; z-index: 99999;
+            background: #1877f2; color: white; padding: 20px; border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3); max-width: 400px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          \`;
+          overlay.innerHTML = \`
+            <div style="font-weight: 600; font-size: 16px; margin-bottom: 8px;">📸 Images Ready!</div>
+            <div style="font-size: 14px; opacity: 0.9;">
+              ${imagePaths.length} image(s) saved to:<br>
+              <code style="background: rgba(255,255,255,0.2); padding: 2px 6px; border-radius: 4px; font-size: 12px;">
+                ~/Downloads/llatria-marketplace-images/
+              </code><br><br>
+              Please drag the images to the photo area or click "Add Photos" to select them.
+            </div>
+            <button onclick="this.parentElement.remove()" style="
+              margin-top: 12px; background: rgba(255,255,255,0.2); border: none;
+              padding: 8px 16px; border-radius: 6px; color: white; cursor: pointer;
+            ">Got it</button>
+          \`;
+          document.body.appendChild(overlay);
+          setTimeout(() => overlay.remove(), 30000);
+        })()
+      `);
+      
+      return { 
+        success: true, 
+        manual: true, 
+        savedTo: downloadDir,
+        message: `Images saved to ${downloadDir}. Please upload manually.`
+      };
+    }
+    
+    // Click the upload area
+    await this.clickAt(uploadArea.x, uploadArea.y);
+    await new Promise(r => setTimeout(r, 1000));
+    
+    // Return paths for native file dialog
+    return {
+      success: true,
+      paths: imagePaths,
+      uploadArea
+    };
+  }
+
+  /**
+   * Main method: Post item to Facebook Marketplace
+   */
+  async postToMarketplace(itemData, images = []) {
     if (this.isProcessing) {
       throw new Error('Facebook posting already in progress');
     }
 
     this.isProcessing = true;
+    this.log('Starting Facebook Marketplace posting...', { title: itemData.title, imageCount: images.length });
 
-    return new Promise((resolve, reject) => {
-      // Create a new BrowserWindow for Facebook
+    try {
+      // Save images to temp files
+      const imagePaths = [];
+      for (let i = 0; i < Math.min(images.length, 10); i++) {
+        const tempPath = await this.saveImageToTemp(images[i], i);
+        imagePaths.push(tempPath);
+      }
+
+      // Create browser window
       this.browserWindow = new BrowserWindow({
-        width: 1200,
-        height: 800,
-        show: true, // Show window so user can see progress
+        width: 1280,
+        height: 900,
+        show: true,
+        title: 'Facebook Marketplace - Llatria',
         webPreferences: {
           nodeIntegration: false,
           contextIsolation: true,
           partition: 'persist:facebook-marketplace',
-          devTools: true, // Enable DevTools for debugging
+          devTools: this.debugMode,
         },
       });
 
-      // Open DevTools for debugging (can be removed in production)
-      if (process.env.NODE_ENV === 'development') {
-        this.browserWindow.webContents.openDevTools();
+      if (this.debugMode) {
+        this.browserWindow.webContents.openDevTools({ mode: 'detach' });
       }
 
-      // Navigate to Facebook Marketplace create page
+      // Navigate to create listing page
       const marketplaceUrl = 'https://www.facebook.com/marketplace/create/item';
-      console.log('[Facebook Automation] Navigating to:', marketplaceUrl);
-      this.browserWindow.loadURL(marketplaceUrl);
-
-      // Wait for page to be ready
-      this.browserWindow.webContents.once('did-finish-load', async () => {
+      this.log('Navigating to:', marketplaceUrl);
+      
+      await this.browserWindow.loadURL(marketplaceUrl);
+      
+      // Wait for page to stabilize
+      await new Promise(r => setTimeout(r, 3000));
+      
+      // Check if logged in
+      const currentUrl = this.browserWindow.webContents.getURL();
+      this.log('Current URL:', currentUrl);
+      
+      if (currentUrl.includes('login') || currentUrl.includes('checkpoint')) {
+        this.log('Login required');
+        
+        // Show login instructions
+        await this.executeScript(`
+          (function() {
+            const overlay = document.createElement('div');
+            overlay.style.cssText = \`
+              position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+              z-index: 99999; background: white; padding: 30px; border-radius: 16px;
+              box-shadow: 0 8px 32px rgba(0,0,0,0.3); text-align: center;
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            \`;
+            overlay.innerHTML = \`
+              <div style="font-size: 48px; margin-bottom: 16px;">🔐</div>
+              <div style="font-size: 20px; font-weight: 600; margin-bottom: 8px;">Please Log In</div>
+              <div style="color: #666; margin-bottom: 16px;">Log in to your Facebook account, then Llatria will continue automatically.</div>
+            \`;
+            document.body.appendChild(overlay);
+          })()
+        `);
+        
+        // Wait for login (check URL periodically)
         try {
-          console.log('[Facebook Automation] Page loaded, waiting for form...');
+          await this.waitFor(async () => {
+            const url = this.browserWindow.webContents.getURL();
+            return url.includes('marketplace/create');
+          }, 120000, 2000);
           
-          // Wait longer for Facebook's dynamic content to load
-          await new Promise(resolve => setTimeout(resolve, 5000));
-          
-          // Check if we're on the right page
-          const currentUrl = this.browserWindow.webContents.getURL();
-          console.log('[Facebook Automation] Current URL:', currentUrl);
-          
-          if (currentUrl.includes('login') || currentUrl.includes('checkpoint')) {
-            this.isProcessing = false;
-            reject(new Error('Please log in to Facebook first. The login window is open.'));
-            return;
-          }
-
-          // Wait for form to be interactive
-          let formReady = false;
-          let attempts = 0;
-          while (!formReady && attempts < 20) {
-            formReady = await this.browserWindow.webContents.executeJavaScript(`
-              document.querySelector('input[type="text"]') !== null || 
-              document.querySelector('textarea') !== null ||
-              document.querySelector('div[role="textbox"]') !== null
-            `);
-            if (!formReady) {
-              await new Promise(resolve => setTimeout(resolve, 500));
-              attempts++;
-            }
-          }
-
-          console.log('[Facebook Automation] Form ready, starting automation...');
-
-          // Prepare data for injection (escape properly)
-          const itemDataSafe = {
-            title: itemData.title || '',
-            description: itemData.description || '',
-            price: itemData.price || 0,
-            condition: itemData.condition || 'used',
-            category: itemData.category || '',
-            location: itemData.location || '',
+          this.log('Login successful, continuing...');
+          await new Promise(r => setTimeout(r, 2000));
+        } catch (e) {
+          return {
+            success: false,
+            error: 'Login timeout. Please log in and try again.',
+            requiresLogin: true
           };
-
-          // Inject automation script
-          const result = await this.browserWindow.webContents.executeJavaScript(`
-            (async () => {
-              try {
-                // Define itemData in this scope
-                const itemData = ${JSON.stringify(itemDataSafe)};
-                
-                // Wait for form to be ready
-                const waitForElement = (selector, timeout = 30000) => {
-                  return new Promise((resolve, reject) => {
-                    const startTime = Date.now();
-                    const checkElement = () => {
-                      const element = document.querySelector(selector);
-                      if (element) {
-                        resolve(element);
-                      } else if (Date.now() - startTime > timeout) {
-                        reject(new Error(\`Element \${selector} not found within \${timeout}ms\`));
-                      } else {
-                        setTimeout(checkElement, 100);
-                      }
-                    };
-                    checkElement();
-                  });
-                };
-
-                // Check if user is logged in
-                const loginButton = document.querySelector('a[href*="login"]');
-                if (loginButton) {
-                  return { success: false, error: 'Please log in to Facebook first', requiresLogin: true };
-                }
-
-                // Find and fill title field
-                // Facebook uses various selectors, try multiple approaches including contenteditable divs
-                const titleSelectors = [
-                  'input[placeholder*="What are you selling"]',
-                  'input[aria-label*="What are you selling"]',
-                  'input[placeholder*="Item name"]',
-                  'input[aria-label*="Item name"]',
-                  'input[type="text"][placeholder*="selling"]',
-                  'input[type="text"][placeholder*="name"]',
-                  'input[data-testid*="title"]',
-                  'input[data-testid*="name"]',
-                  'div[contenteditable="true"][aria-label*="sell"]',
-                  'div[contenteditable="true"][aria-label*="name"]',
-                  'div[role="textbox"][aria-label*="sell"]',
-                  'input[type="text"]:not([type="hidden"])',
-                ];
-                
-                let titleField = null;
-                for (const selector of titleSelectors) {
-                  const fields = Array.from(document.querySelectorAll(selector));
-                  // Filter out hidden fields and find the most likely title field
-                  titleField = fields.find(field => {
-                    const rect = field.getBoundingClientRect();
-                    const isVisible = rect.width > 0 && rect.height > 0;
-                    const placeholder = field.placeholder?.toLowerCase() || '';
-                    const ariaLabel = field.getAttribute('aria-label')?.toLowerCase() || '';
-                    const textContent = field.textContent?.toLowerCase() || '';
-                    
-                    return isVisible && (
-                      placeholder.includes('sell') ||
-                      placeholder.includes('name') ||
-                      placeholder.includes('title') ||
-                      ariaLabel.includes('sell') ||
-                      ariaLabel.includes('name') ||
-                      textContent.includes('what are you selling')
-                    );
-                  });
-                  if (titleField) break;
-                }
-                
-                if (!titleField) {
-                  // Last resort: try first visible text input or contenteditable
-                  const allInputs = Array.from(document.querySelectorAll('input[type="text"], div[contenteditable="true"]'));
-                  titleField = allInputs.find(input => {
-                    const rect = input.getBoundingClientRect();
-                    return rect.width > 100 && rect.height > 20;
-                  });
-                }
-                
-                if (!titleField) {
-                  console.error('Title field not found. Available elements:', {
-                    inputs: document.querySelectorAll('input').length,
-                    textareas: document.querySelectorAll('textarea').length,
-                    contenteditables: document.querySelectorAll('[contenteditable="true"]').length
-                  });
-                  return { 
-                    success: false, 
-                    error: 'Could not find title field. Facebook may have updated their interface.',
-                    debugInfo: {
-                      inputs: document.querySelectorAll('input').length,
-                      textareas: document.querySelectorAll('textarea').length,
-                      contenteditables: document.querySelectorAll('[contenteditable="true"]').length
-                    }
-                  };
-                }
-
-                // Fill the field based on type
-                titleField.focus();
-                await new Promise(resolve => setTimeout(resolve, 100));
-                
-                const titleValue = itemData.title || '';
-                if (titleField.tagName === 'INPUT' || titleField.tagName === 'TEXTAREA') {
-                  titleField.value = titleValue;
-                  titleField.dispatchEvent(new Event('input', { bubbles: true }));
-                  titleField.dispatchEvent(new Event('change', { bubbles: true }));
-                } else if (titleField.contentEditable === 'true') {
-                  titleField.textContent = titleValue;
-                  titleField.dispatchEvent(new Event('input', { bubbles: true }));
-                }
-                
-                console.log('Title filled:', titleValue);
-
-                // Find and fill price field
-                const priceSelectors = [
-                  'input[placeholder*="Price"]',
-                  'input[aria-label*="Price"]',
-                  'input[placeholder*="$"]',
-                  'input[type="number"]',
-                  'input[inputmode="numeric"]',
-                  'input[data-testid*="price"]',
-                ];
-                
-                let priceField = null;
-                for (const selector of priceSelectors) {
-                  const fields = Array.from(document.querySelectorAll(selector));
-                  priceField = fields.find(f => {
-                    const rect = f.getBoundingClientRect();
-                    return rect.width > 0 && rect.height > 0 && 
-                           (f.placeholder?.toLowerCase().includes('price') || 
-                            f.placeholder?.includes('$') ||
-                            f.getAttribute('aria-label')?.toLowerCase().includes('price') ||
-                            f.type === 'number');
-                  });
-                  if (priceField) break;
-                }
-                
-                if (priceField) {
-                  priceField.focus();
-                  const priceValue = itemData.price || 0;
-                  priceField.value = priceValue.toString();
-                  priceField.dispatchEvent(new Event('input', { bubbles: true }));
-                  priceField.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-
-                // Find and fill description field
-                const descriptionSelectors = [
-                  'textarea[placeholder*="Describe"]',
-                  'textarea[aria-label*="Describe"]',
-                  'textarea[placeholder*="description"]',
-                  'textarea[aria-label*="description"]',
-                  'textarea[data-testid*="description"]',
-                  'div[contenteditable="true"][aria-label*="description"]',
-                  'div[contenteditable="true"][aria-label*="describe"]',
-                  'div[role="textbox"][aria-label*="description"]',
-                  'textarea',
-                ];
-                
-                let descriptionField = null;
-                for (const selector of descriptionSelectors) {
-                  const fields = Array.from(document.querySelectorAll(selector));
-                  descriptionField = fields.find(f => {
-                    const rect = f.getBoundingClientRect();
-                    return rect.width > 200 && rect.height > 50; // Description fields are usually larger
-                  });
-                  if (descriptionField) break;
-                }
-                
-                // If still not found, use first large textarea or contenteditable
-                if (!descriptionField) {
-                  const allTextareas = Array.from(document.querySelectorAll('textarea, div[contenteditable="true"]'));
-                  descriptionField = allTextareas.find(f => {
-                    const rect = f.getBoundingClientRect();
-                    return rect.width > 200 && rect.height > 50;
-                  });
-                }
-                
-                if (descriptionField) {
-                  descriptionField.focus();
-                  await new Promise(resolve => setTimeout(resolve, 100));
-                  
-                  const descValue = (itemData.description || '').replace(/\\n/g, ' ');
-                  if (descriptionField.tagName === 'TEXTAREA' || descriptionField.tagName === 'INPUT') {
-                    descriptionField.value = descValue;
-                    descriptionField.dispatchEvent(new Event('input', { bubbles: true }));
-                    descriptionField.dispatchEvent(new Event('change', { bubbles: true }));
-                  } else if (descriptionField.contentEditable === 'true') {
-                    descriptionField.textContent = descValue;
-                    descriptionField.dispatchEvent(new Event('input', { bubbles: true }));
-                  }
-                  console.log('Description filled');
-                } else {
-                  console.warn('Description field not found');
-                }
-
-                // Find and select category (if dropdown exists)
-                const categorySelectors = [
-                  'div[role="button"][aria-label*="Category"]',
-                  'div[role="listbox"]',
-                  'select',
-                ];
-                
-                let categoryField = null;
-                for (const selector of categorySelectors) {
-                  categoryField = document.querySelector(selector);
-                  if (categoryField) break;
-                }
-                
-                if (categoryField && itemData.category) {
-                  categoryField.click();
-                  await new Promise(resolve => setTimeout(resolve, 500));
-                  
-                  // Try to find and click the category option
-                  const categoryOptions = Array.from(document.querySelectorAll('div[role="option"]'));
-                  const matchingOption = categoryOptions.find(opt => 
-                    opt.textContent?.toLowerCase().includes(itemData.category.toLowerCase())
-                  );
-                  
-                  if (matchingOption) {
-                    matchingOption.click();
-                  }
-                }
-
-                // Find and fill location field (if exists)
-                if (itemData.location) {
-                  const locationSelectors = [
-                    'input[placeholder*="Location"]',
-                    'input[aria-label*="Location"]',
-                  ];
-                  
-                  let locationField = null;
-                  for (const selector of locationSelectors) {
-                    locationField = document.querySelector(selector);
-                    if (locationField) break;
-                  }
-                  
-                if (locationField) {
-                  locationField.focus();
-                  const locationValue = itemData.location || '';
-                  locationField.value = locationValue;
-                  locationField.dispatchEvent(new Event('input', { bubbles: true }));
-                  locationField.dispatchEvent(new Event('change', { bubbles: true }));
-                }
-                }
-
-                // Note: Image upload requires file input, which we'll handle separately
-                // The images array will be passed to the Electron main process
-
-                return { 
-                  success: true, 
-                  message: 'Form filled successfully. Please review and submit manually.',
-                };
-              } catch (error) {
-                return { success: false, error: error.message };
-              }
-            })()
-          `);
-
-          if (result.success) {
-            // Return success - user will need to click publish button
-            resolve({
-              success: true,
-              listingId: `fb-${Date.now()}`,
-              url: this.browserWindow.webContents.getURL(),
-              message: 'Form filled and images uploaded. Please review and click "Publish" button in the Facebook window.',
-              requiresManualSubmit: true,
-            });
-          } else if (result.requiresLogin) {
-            reject(new Error('Please log in to Facebook first. The login window is open.'));
-          } else {
-            console.error('[Facebook Automation] Form fill failed:', result);
-            reject(new Error(result.error || 'Failed to fill Facebook form'));
-          }
-        } catch (error) {
-          reject(error);
-        } finally {
-          this.isProcessing = false;
         }
-      });
-
-      // Handle window close
-      this.browserWindow.on('closed', () => {
-        this.browserWindow = null;
-        this.isProcessing = false;
-      });
-
-      // Handle errors
-      this.browserWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
-        if (errorCode !== -3) { // Ignore navigation errors
-          this.isProcessing = false;
-          reject(new Error(`Failed to load Facebook: ${errorDescription}`));
-        }
-      });
-    });
-  }
-
-  /**
-   * Upload images to Facebook Marketplace
-   * Attempts to programmatically upload images using file input manipulation
-   */
-  async uploadImages(images) {
-    if (!this.browserWindow || !images || images.length === 0) {
-      return { success: false, error: 'No images or browser window' };
-    }
-
-    try {
-      console.log('[Facebook Automation] Preparing to upload', images.length, 'images...');
-      
-      // Save images to temp files
-      const os = require('os');
-      const tempDir = path.join(os.homedir(), 'Downloads', 'llatria-facebook-images');
-      
-      // Create directory if it doesn't exist
-      try {
-        await fs.mkdir(tempDir, { recursive: true });
-      } catch (err) {
-        // Directory might already exist
       }
 
-      const tempFiles = [];
-      for (let i = 0; i < Math.min(images.length, 10); i++) { // Facebook allows max 10 images
-        const tempPath = path.join(tempDir, `llatria-image-${Date.now()}-${i + 1}.jpg`);
-        const base64Data = images[i].replace(/^data:image\/\w+;base64,/, '');
-        const buffer = Buffer.from(base64Data, 'base64');
-        await fs.writeFile(tempPath, buffer);
-        tempFiles.push(tempPath);
-        console.log('[Facebook Automation] Saved image', i + 1, 'to', tempPath);
+      // Wait for form to be ready
+      this.log('Waiting for form to be ready...');
+      await new Promise(r => setTimeout(r, 3000));
+      
+      // Fill in the form fields
+      const fillResults = {
+        title: false,
+        price: false,
+        description: false,
+        photos: false
+      };
+
+      // Fill title
+      fillResults.title = await this.fillField({
+        label: 'title',
+        value: itemData.title,
+        type: 'text'
+      }) || await this.fillField({
+        label: 'what are you selling',
+        value: itemData.title,
+        type: 'text'
+      });
+
+      await new Promise(r => setTimeout(r, 500));
+
+      // Fill price
+      fillResults.price = await this.fillField({
+        label: 'price',
+        value: itemData.price,
+        type: 'number'
+      });
+
+      await new Promise(r => setTimeout(r, 500));
+
+      // Fill description
+      fillResults.description = await this.fillField({
+        label: 'description',
+        value: itemData.description,
+        type: 'textarea'
+      }) || await this.fillField({
+        label: 'describe',
+        value: itemData.description,
+        type: 'textarea'
+      });
+
+      // Handle photos
+      if (imagePaths.length > 0) {
+        const photoResult = await this.uploadPhotos(imagePaths);
+        fillResults.photos = photoResult.success;
       }
 
-      // Wait a bit for page to be ready
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Try to programmatically upload images
-      const uploadResult = await this.browserWindow.webContents.executeJavaScript(`
-        (async () => {
-          try {
-            // Find file input
-            const fileInputSelectors = [
-              'input[type="file"][accept*="image"]',
-              'input[type="file"]',
-              'input[accept*="image"]',
-            ];
-            
-            let fileInput = null;
-            for (const selector of fileInputSelectors) {
-              fileInput = document.querySelector(selector);
-              if (fileInput) break;
-            }
-            
-            // Also try to find upload button and trigger it
-            if (!fileInput) {
-              const uploadButtons = [
-                'div[role="button"][aria-label*="photo"]',
-                'div[role="button"][aria-label*="image"]',
-                'div[aria-label*="Add photos"]',
-                'div[aria-label*="Add photos or videos"]',
-              ];
-              
-              for (const buttonSelector of uploadButtons) {
-                const button = document.querySelector(buttonSelector);
-                if (button) {
-                  button.click();
-                  await new Promise(resolve => setTimeout(resolve, 1000));
-                  // Try to find file input again after clicking
-                  for (const selector of fileInputSelectors) {
-                    fileInput = document.querySelector(selector);
-                    if (fileInput) break;
-                  }
-                  if (fileInput) break;
-                }
-              }
-            }
-            
-            if (!fileInput) {
-              return { 
-                success: false, 
-                error: 'Could not find file input. Images saved to Downloads folder.',
-                tempDir: \`${tempDir}\`,
-                fileCount: ${tempFiles.length}
-              };
-            }
-            
-            // Create FileList with the temp files
-            // Note: We can't directly set files, but we can try to trigger the input
-            fileInput.style.display = 'block';
-            fileInput.style.visibility = 'visible';
-            fileInput.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            
-            // Highlight the input
-            fileInput.style.border = '3px solid #1877f2';
-            fileInput.style.boxShadow = '0 0 10px rgba(24, 119, 242, 0.5)';
-            
-            return {
-              success: true,
-              found: true,
-              message: 'File input found. Please select images manually or drag and drop.',
-              tempDir: \`${tempDir}\`,
-              fileCount: ${tempFiles.length}
-            };
-          } catch (error) {
-            return { success: false, error: error.message };
-          }
-        })()
-      `);
-
-      // Log upload result
-      console.log('[Facebook Automation] Upload attempt result:', uploadResult);
-      
-      // Show notification with file locations
-      const message = uploadResult?.success 
-        ? `File input found and highlighted. ${tempFiles.length} image(s) ready in: ${tempDir}`
-        : `Images saved to: ${tempDir}. ${uploadResult?.error || 'Please upload manually'}`;
-
-      // Show notification in the window
-      this.browserWindow.webContents.executeJavaScript(`
-        (() => {
-          const notification = document.createElement('div');
-          notification.style.cssText = \`
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            background: #1877f2;
-            color: white;
-            padding: 15px 20px;
-            border-radius: 8px;
-            z-index: 10000;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            font-size: 14px;
-            max-width: 350px;
-          \`;
-          notification.innerHTML = \`
-            <strong>📸 Images Ready!</strong><br>
-            <small>${tempFiles.length} image(s) saved to:</small><br>
-            <code style="font-size: 11px; background: rgba(0,0,0,0.2); padding: 2px 4px; border-radius: 3px; word-break: break-all;">${tempDir}</code><br>
-            <small>${uploadResult?.found ? 'File input highlighted. Click it to select images.' : 'Please drag images to the upload area or click to browse.'}</small>
-          \`;
-          document.body.appendChild(notification);
+      // Show completion overlay
+      await this.executeScript(`
+        (function() {
+          const itemData = ${JSON.stringify(itemData)};
+          const fillResults = ${JSON.stringify(fillResults)};
           
-          setTimeout(() => {
-            notification.style.opacity = '0';
-            notification.style.transition = 'opacity 0.5s';
-            setTimeout(() => notification.remove(), 500);
-          }, 15000);
+          const overlay = document.createElement('div');
+          overlay.id = 'llatria-status';
+          overlay.style.cssText = \`
+            position: fixed; bottom: 20px; right: 20px; z-index: 99999;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; padding: 20px; border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3); max-width: 350px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          \`;
+          
+          const statusIcon = (success) => success ? '✅' : '⚠️';
+          
+          overlay.innerHTML = \`
+            <div style="font-weight: 600; font-size: 16px; margin-bottom: 12px;">
+              Llatria - Listing Ready
+            </div>
+            <div style="font-size: 13px; opacity: 0.9; line-height: 1.6;">
+              \${statusIcon(fillResults.title)} Title: \${fillResults.title ? 'Filled' : 'Manual entry needed'}<br>
+              \${statusIcon(fillResults.price)} Price: \${fillResults.price ? 'Filled' : 'Manual entry needed'}<br>
+              \${statusIcon(fillResults.description)} Description: \${fillResults.description ? 'Filled' : 'Manual entry needed'}<br>
+              \${statusIcon(fillResults.photos)} Photos: \${fillResults.photos ? 'Ready' : 'Manual upload needed'}
+            </div>
+            <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.2); font-size: 12px; opacity: 0.8;">
+              Review the listing and click <strong>Publish</strong> when ready.
+            </div>
+            <button onclick="this.parentElement.remove()" style="
+              margin-top: 12px; background: rgba(255,255,255,0.2); border: none;
+              padding: 8px 16px; border-radius: 6px; color: white; cursor: pointer;
+              width: 100%;
+            ">Dismiss</button>
+          \`;
+          document.body.appendChild(overlay);
         })()
       `);
 
       return {
-        success: uploadResult?.success || false,
-        tempFiles,
-        message: message,
-        fileInputFound: uploadResult?.found || false,
+        success: true,
+        fillResults,
+        url: this.browserWindow.webContents.getURL(),
+        message: 'Form populated. Please review and click Publish.',
+        requiresManualSubmit: true
       };
+
     } catch (error) {
-      console.error('Error preparing images:', error);
+      this.error('Posting failed:', error);
       return {
         success: false,
-        error: error.message,
+        error: error.message
       };
+    } finally {
+      this.isProcessing = false;
     }
-  }
-
-  /**
-   * Open Facebook authentication window
-   */
-  async openAuthWindow() {
-    const authWindow = new BrowserWindow({
-      width: 800,
-      height: 600,
-      show: true,
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        partition: 'persist:facebook-auth',
-      },
-    });
-
-    authWindow.loadURL('https://www.facebook.com/login');
-
-    return new Promise((resolve) => {
-      authWindow.webContents.once('did-finish-load', () => {
-        // Check if logged in by looking for marketplace link
-        authWindow.webContents.executeJavaScript(`
-          document.querySelector('a[href*="marketplace"]') !== null
-        `).then((isLoggedIn) => {
-          if (isLoggedIn) {
-            resolve({ success: true, message: 'Logged in successfully' });
-          } else {
-            resolve({ success: false, message: 'Please complete login in the window' });
-          }
-        });
-      });
-
-      authWindow.on('closed', () => {
-        resolve({ success: false, message: 'Auth window closed' });
-      });
-    });
   }
 
   /**
    * Close the browser window
    */
   closeWindow() {
-    if (this.browserWindow) {
+    if (this.browserWindow && !this.browserWindow.isDestroyed()) {
       this.browserWindow.close();
-      this.browserWindow = null;
     }
+    this.browserWindow = null;
     this.isProcessing = false;
+    this.cleanupTempImages();
+  }
+
+  /**
+   * Check if currently processing
+   */
+  getStatus() {
+    return {
+      isProcessing: this.isProcessing,
+      hasWindow: this.browserWindow !== null && !this.browserWindow.isDestroyed()
+    };
+  }
+
+  /**
+   * Open Facebook login window for authentication
+   */
+  async openAuthWindow() {
+    return new Promise((resolve) => {
+      const authWindow = new BrowserWindow({
+        width: 800,
+        height: 700,
+        show: true,
+        title: 'Facebook Login - Llatria',
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true,
+          partition: 'persist:facebook-marketplace',
+        },
+      });
+
+      authWindow.loadURL('https://www.facebook.com/login');
+
+      // Check if logged in after page loads
+      authWindow.webContents.on('did-finish-load', async () => {
+        const url = authWindow.webContents.getURL();
+        
+        // If we're on a page that's not login, user is logged in
+        if (!url.includes('login') && !url.includes('checkpoint')) {
+          this.log('User logged in successfully');
+          resolve({ success: true, message: 'Logged in to Facebook' });
+          authWindow.close();
+        }
+      });
+
+      // Handle manual close
+      authWindow.on('closed', () => {
+        resolve({ success: false, message: 'Login window closed' });
+      });
+    });
   }
 }
 
@@ -621,4 +683,3 @@ class FacebookAutomation {
 const facebookAutomation = new FacebookAutomation();
 
 module.exports = { facebookAutomation };
-

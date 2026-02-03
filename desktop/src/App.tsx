@@ -13,7 +13,9 @@ import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { KeyboardShortcutsHelp } from './components/common/KeyboardShortcutsHelp';
 import { OfflineIndicator } from './components/common/OfflineIndicator';
 import { OnboardingTour } from './components/onboarding/OnboardingTour';
+import { PostingQueue } from './components/common/PostingQueue';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useSocketSync } from './hooks/useSocketSync';
 import { useThemeStore } from './store/themeStore';
 import { useInventoryStore } from './store/inventoryStore';
 import { useAuthStore } from './store/authStore';
@@ -32,6 +34,9 @@ function App() {
   const { loadInventory } = useInventoryStore();
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const initializeAuth = useAuthStore((state) => state.initialize);
+
+  // Initialize Socket.io real-time sync
+  useSocketSync();
 
   // Listen for navigation events
   useEffect(() => {
@@ -164,6 +169,9 @@ function App() {
           </div>
         </ErrorBoundary>
       </div>
+
+      {/* Posting Queue Status Bar */}
+      <PostingQueue />
 
       {/* Bottom Right Panel - Settings & Theme */}
       <div className="fixed bottom-6 right-6 flex items-center gap-2 bg-card border border-border rounded-lg shadow-lg p-2 z-50">

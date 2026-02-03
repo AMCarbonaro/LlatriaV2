@@ -1,4 +1,5 @@
 import express from 'express';
+import { createServer } from 'http';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import platformRoutes from './routes/platform.routes';
@@ -7,11 +8,16 @@ import inventoryRoutes from './routes/inventory.routes';
 import aiRoutes from './routes/ai.routes';
 import websiteRoutes from './routes/website.routes';
 import { extractSubdomain } from './middleware/subdomain.middleware';
+import { initializeSocket } from './lib/socket';
 
 dotenv.config();
 
 const app = express();
+const httpServer = createServer(app);
 const PORT = process.env.PORT || 3001;
+
+// Initialize Socket.io
+const io = initializeSocket(httpServer);
 
 // Middleware
 // CORS configuration - allow multiple origins for development
@@ -58,8 +64,9 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
   });
 });
 
-app.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`Backend server running on port ${PORT}`);
+  console.log(`Socket.io: Enabled`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Database: ${process.env.DATABASE_URL ? 'Connected' : 'Not configured'}`);
   console.log(`CORS Origin: ${process.env.CORS_ORIGIN || 'http://localhost:3000'}`);

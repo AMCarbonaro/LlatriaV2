@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { inventoryService } from '../services/inventory.service';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 import { handleError, AppError, ErrorCode } from '../utils/error-handler';
+import { emitToAll, SocketEvents } from '../lib/socket';
 
 /**
  * Get all inventory items
@@ -91,6 +92,9 @@ export async function createItem(req: AuthenticatedRequest, res: Response) {
       aiData,
     });
 
+    // Emit socket event for real-time sync
+    emitToAll(SocketEvents.INVENTORY_CREATED, { item, userId: req.userId });
+
     res.status(201).json({
       success: true,
       item,
@@ -125,6 +129,9 @@ export async function updateItem(req: AuthenticatedRequest, res: Response) {
 
     const item = await inventoryService.updateItem(id, req.userId, updateData);
 
+    // Emit socket event for real-time sync
+    emitToAll(SocketEvents.INVENTORY_UPDATED, { item, userId: req.userId });
+
     res.json({
       success: true,
       item,
@@ -147,6 +154,9 @@ export async function deleteItem(req: AuthenticatedRequest, res: Response) {
     const { id } = req.params;
     await inventoryService.deleteItem(id, req.userId);
 
+    // Emit socket event for real-time sync
+    emitToAll(SocketEvents.INVENTORY_DELETED, { itemId: id, userId: req.userId });
+
     res.json({
       success: true,
       message: 'Item deleted successfully',
@@ -168,6 +178,9 @@ export async function markAsSold(req: AuthenticatedRequest, res: Response) {
 
     const { id } = req.params;
     const item = await inventoryService.markAsSold(id, req.userId);
+
+    // Emit socket event for real-time sync
+    emitToAll(SocketEvents.INVENTORY_UPDATED, { item, userId: req.userId });
 
     res.json({
       success: true,
@@ -201,6 +214,10 @@ export async function bulkOperation(req: AuthenticatedRequest, res: Response) {
     switch (operation) {
       case 'delete':
         await inventoryService.bulkDelete(itemIds, req.userId);
+        // Emit socket event for each deleted item
+        itemIds.forEach((itemId: string) => {
+          emitToAll(SocketEvents.INVENTORY_DELETED, { itemId, userId: req.userId });
+        });
         res.json({
           success: true,
           message: `${itemIds.length} item(s) deleted successfully`,
@@ -209,6 +226,8 @@ export async function bulkOperation(req: AuthenticatedRequest, res: Response) {
 
       case 'mark-sold':
         await inventoryService.bulkMarkAsSold(itemIds, req.userId);
+        // Emit sync request to refresh
+        emitToAll(SocketEvents.SYNC_REQUEST, { userId: req.userId });
         res.json({
           success: true,
           message: `${itemIds.length} item(s) marked as sold`,

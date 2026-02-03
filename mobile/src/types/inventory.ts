@@ -1,4 +1,4 @@
-export type ItemStatus = 'active' | 'sold' | 'draft';
+export type ItemStatus = 'unposted' | 'posting' | 'active' | 'sold';
 
 export type ItemCondition = 'new' | 'like_new' | 'used' | 'fair' | 'poor';
 
@@ -49,27 +49,7 @@ export interface AIData {
     width?: string;
     height?: string;
     weight?: string;
-    diameter?: string;
-    thickness?: string;
   };
-  operatingSystem?: string;
-  processor?: string;
-  ram?: string;
-  storage?: string;
-  screenSize?: string;
-  resolution?: string;
-  batteryLife?: string;
-  instrumentType?: string;
-  numberOfStrings?: number;
-  finish?: string;
-  metalType?: string;
-  stoneType?: string;
-  carat?: string;
-  powerSource?: string;
-  voltage?: string;
-  sensorSize?: string;
-  megapixels?: string;
-  videoResolution?: string;
   specifications?: Record<string, string>;
   similarItems?: Array<{
     title: string;
@@ -79,4 +59,3 @@ export interface AIData {
   }>;
   researchNotes?: string;
 }
-

@@ -13,8 +13,11 @@ import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
 import { useRouter } from 'expo-router';
 import { useInventoryStore } from '@/store/inventoryStore';
 import { useThemeStore } from '@/store/themeStore';
+import { apiService } from '@/services/apiService';
 import { mockAIService } from '@/services/mockAIService';
 import { Platform } from '@/types/inventory';
+
+const useRealApi = true; // Set to false for offline development
 
 export default function CameraScreen() {
   const router = useRouter();
@@ -133,7 +136,7 @@ export default function CameraScreen() {
       condition: 'used' as const,
       category: 'Loading...',
       images: [imageData],
-      status: 'draft' as const,
+      status: 'unposted' as const,
       platforms: ['facebook', 'ebay', 'website'] as Platform[],
       postingStatus: postingStatus,
     };
@@ -142,9 +145,16 @@ export default function CameraScreen() {
 
     // Process with AI
     try {
-      // Create a temporary file URI for the AI service
-      const tempUri = `data:image/jpeg;base64,${imageData.split(',')[1]}`;
-      const aiData = await mockAIService.recognizeItem(tempUri);
+      let aiData;
+      try {
+        // Try real API first
+        aiData = useRealApi
+          ? await apiService.generateListing(imageData, name)
+          : await mockAIService.recognizeItem(imageData);
+      } catch (apiError) {
+        console.log('API failed, using mock:', apiError);
+        aiData = await mockAIService.recognizeItem(imageData);
+      }
 
       // Update the item we just created (preserve postingStatus)
       await updateItem(createdItem.id, {
@@ -153,7 +163,7 @@ export default function CameraScreen() {
         price: aiData.suggestedPrice,
         condition: aiData.condition,
         category: aiData.category,
-        status: 'active',
+        status: 'unposted', // Ready to post but not yet posted
         aiData: aiData,
         postingStatus: postingStatus, // Preserve the idle posting status for all platforms
       });
